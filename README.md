@@ -58,6 +58,24 @@ the read-only `/api/punches` route and displays cached database records.
 
 ## Proper deployment guidelines
 
+### Vercel deployment confirmation
+
+The Express application exports its `app` for the Vercel Functions runtime and
+continues to use `app.listen()` during local development. Configure
+`SYNC_MODE=agent` on Vercel so the cloud function never attempts to connect
+directly to the terminal's private office IP address.
+
+After deploying the backend, open:
+
+```text
+https://YOUR-API-PROJECT.vercel.app/api/deployment-status
+```
+
+A successful deployment returns HTTP 200 with `status: "ready"`, confirms the
+Atlas connection, and identifies whether synchronization is running in
+`agent` or `direct` mode. HTTP 503 means the function is deployed but Atlas
+could not be reached.
+
 - Keep device credentials only in `.env`; never commit that file.
 - Put this service on the same protected LAN or VLAN as the terminal. Do not
   expose a Hikvision ISAPI endpoint directly to the public internet.

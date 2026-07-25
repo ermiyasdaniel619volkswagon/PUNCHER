@@ -43,6 +43,9 @@ const DUPLICATE_WINDOW_MINUTES =
 const JWT_SECRET = process.env.JWT_SECRET || "development-only-change-this-secret";
 const HR_EMAIL = process.env.HR_EMAIL || "hr@company.local";
 const HR_PASSWORD = process.env.HR_PASSWORD || "ChangeMe123!";
+const IS_VERCEL = Boolean(process.env.VERCEL);
+const SYNC_MODE =
+  process.env.SYNC_MODE || (IS_VERCEL ? "agent" : "direct");
 
 app.use(cors());
 app.use(express.json());
@@ -85,6 +88,107 @@ const hrUserSchema = new mongoose.Schema(
 );
 const HrUser = mongoose.model("HrUser", hrUserSchema);
 
+let databaseInitialization;
+
+async function initializeDatabase() {
+  if (mongoose.connection.readyState === 1 && databaseInitialization) {
+    return databaseInitialization;
+  }
+
+  if (!databaseInitialization) {
+    databaseInitialization = (async () => {
+      await mongoose.connect(MONGODB_URI);
+      console.log(
+        `[database] Connected successfully (${IS_VERCEL ? "Vercel" : "local"} runtime).`
+      );
+
+      const normalizedEmail = HR_EMAIL.toLowerCase();
+      const existingHr = await HrUser.findOne({ email: normalizedEmail });
+      if (!existingHr) {
+        await HrUser.create({
+          email: normalizedEmail,
+          passwordHash: await bcrypt.hash(HR_PASSWORD, 12),
+          name: "HR Administrator",
+          role: "hr",
+        });
+        console.log(`[database] Initial HR account created for ${HR_EMAIL}.`);
+      } else if (!(await bcrypt.compare(HR_PASSWORD, existingHr.passwordHash))) {
+        existingHr.passwordHash = await bcrypt.hash(HR_PASSWORD, 12);
+        await existingHr.save();
+        console.log(
+          `[database] HR account password synchronized from the environment for ${HR_EMAIL}.`
+        );
+      }
+
+      return mongoose.connection;
+    })().catch((error) => {
+      databaseInitialization = undefined;
+      throw error;
+    });
+  }
+
+  return databaseInitialization;
+}
+
+async function requireDatabase(_req, res, next) {
+  try {
+    await initializeDatabase();
+    next();
+  } catch (error) {
+    console.error("[database] Request blocked because Atlas is unavailable:", error.message);
+    res.status(503).json({
+      status: "unavailable",
+      message: "The PUNCHER API is running, but the database connection failed.",
+      database: "disconnected",
+      detail: error.message,
+    });
+  }
+}
+
+app.get("/api/deployment-status", async (_req, res) => {
+  try {
+    await initializeDatabase();
+    const platform = IS_VERCEL ? "Vercel" : "Local";
+    const message = `PUNCHER API deployment is operational on ${platform}. MongoDB Atlas is connected.`;
+    console.log(`[deployment] READY: ${message}`);
+    res.json({
+      status: "ready",
+      message,
+      checkedAt: new Date().toISOString(),
+      deployment: {
+        platform,
+        environment: process.env.VERCEL_ENV || process.env.NODE_ENV || "development",
+        region: process.env.VERCEL_REGION || "local",
+        commit: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) || null,
+      },
+      database: {
+        status: "connected",
+        name: mongoose.connection.name || "attendanceDB",
+      },
+      synchronization: {
+        mode: SYNC_MODE,
+        directDeviceAccess: SYNC_MODE === "direct",
+        message:
+          SYNC_MODE === "agent"
+            ? "Cloud deployment is ready. Live terminal data must be uploaded by the office synchronization agent."
+            : "Direct terminal synchronization is enabled for this runtime.",
+      },
+    });
+  } catch (error) {
+    console.error("[deployment] NOT READY:", error.message);
+    res.status(503).json({
+      status: "not_ready",
+      message:
+        "The PUNCHER API function is running, but MongoDB Atlas is not connected.",
+      checkedAt: new Date().toISOString(),
+      database: { status: "disconnected" },
+      detail: error.message,
+    });
+  }
+});
+
+app.use("/api", requireDatabase);
+
 function requireAuth(req, res, next) {
   const token = req.headers.authorization?.replace(/^Bearer\s+/i, "");
   if (!token) return res.status(401).json({ message: "Authentication required." });
@@ -94,6 +198,20 @@ function requireAuth(req, res, next) {
   } catch {
     res.status(401).json({ message: "Your session is invalid or expired." });
   }
+}
+
+function requireDirectDevice(req, res, next) {
+  if (SYNC_MODE === "direct") return next();
+  res.status(409).json({
+    message: "Direct terminal synchronization is disabled in this deployment.",
+    detail:
+      "The cloud API is running in office-agent mode. Synchronization must originate from a computer on the terminal's office network.",
+    synchronization: {
+      mode: SYNC_MODE,
+      deploymentReady: true,
+      deviceNetworkRequired: true,
+    },
+  });
 }
 
 app.post("/api/auth/login", async (req, res) => {
@@ -479,16 +597,26 @@ async function logDeviceDiagnostics(reason = "startup") {
 }
 
 app.get("/api/health", async (_req, res) => {
-  const device = await tcpProbe(DEVICE_IP, DEVICE_PORT);
+  const device =
+    SYNC_MODE === "direct"
+      ? {
+          host: DEVICE_IP,
+          port: DEVICE_PORT,
+          protocol: DEVICE_PROTOCOL,
+          ...(await tcpProbe(DEVICE_IP, DEVICE_PORT)),
+        }
+      : {
+          status: "managed_by_office_agent",
+          reachable: null,
+          message:
+            "Device reachability is checked by the office synchronization agent, not by Vercel.",
+        };
   res.json({
     status: "ok",
+    runtime: IS_VERCEL ? "vercel" : "local",
     database: mongoose.connection.readyState === 1 ? "connected" : "disconnected",
-    device: {
-      host: DEVICE_IP,
-      port: DEVICE_PORT,
-      protocol: DEVICE_PROTOCOL,
-      ...device,
-    },
+    synchronizationMode: SYNC_MODE,
+    device,
   });
 });
 
@@ -527,7 +655,7 @@ app.get("/api/history", async (req, res) => {
   }
 });
 
-app.post("/api/employees/sync", async (_req, res) => {
+app.post("/api/employees/sync", requireDirectDevice, async (_req, res) => {
   try {
     const countClient = new DigestClient(API_USER, API_PASS);
     const countResponse = await countClient.fetch(
@@ -918,7 +1046,7 @@ app.get("/api/attendance/today/export", async (req, res) => {
   }
 });
 
-app.get("/api/sync-punches", async (_req, res) => {
+app.get("/api/sync-punches", requireDirectDevice, async (_req, res) => {
   const syncStartedAt = Date.now();
   const requestId = `${Date.now().toString(36)}-${Math.random()
     .toString(36)
@@ -1169,31 +1297,25 @@ app.get("/api/sync-punches", async (_req, res) => {
 
 async function startServer() {
   try {
-    await mongoose.connect(MONGODB_URI);
-    console.log(`MongoDB connected: ${MONGODB_URI}`);
-    const existingHr = await HrUser.findOne({ email: HR_EMAIL.toLowerCase() });
-    if (!existingHr) {
-      await HrUser.create({
-        email: HR_EMAIL.toLowerCase(),
-        passwordHash: await bcrypt.hash(HR_PASSWORD, 12),
-        name: "HR Administrator",
-        role: "hr",
-      });
-      console.log(`Initial HR account created for ${HR_EMAIL}`);
-    } else if (!(await bcrypt.compare(HR_PASSWORD, existingHr.passwordHash))) {
-      existingHr.passwordHash = await bcrypt.hash(HR_PASSWORD, 12);
-      await existingHr.save();
-      console.log(`HR account password updated from environment for ${HR_EMAIL}`);
-    }
+    await initializeDatabase();
     app.listen(PORT, () => {
       console.log(`PUNCHER API running at http://localhost:${PORT}`);
+      console.log(
+        `Deployment confirmation: http://localhost:${PORT}/api/deployment-status`
+      );
       console.log(
         `Hikvision target: ${DEVICE_PROTOCOL}://${DEVICE_IP}:${DEVICE_PORT} (user: ${API_USER}, password: configured but hidden)`
       );
       console.log(`Device diagnostics: http://localhost:${PORT}/api/health`);
-      logDeviceDiagnostics().catch((error) => {
-        console.error("Startup device diagnostics failed:", error.message);
-      });
+      if (SYNC_MODE === "direct") {
+        logDeviceDiagnostics().catch((error) => {
+          console.error("Startup device diagnostics failed:", error.message);
+        });
+      } else {
+        console.log(
+          "[sync] Office-agent mode enabled; startup terminal diagnostics skipped."
+        );
+      }
     });
   } catch (error) {
     console.error("Could not start server:", error.message);
@@ -1201,4 +1323,8 @@ async function startServer() {
   }
 }
 
-startServer();
+if (!IS_VERCEL) {
+  startServer();
+}
+
+export default app;
