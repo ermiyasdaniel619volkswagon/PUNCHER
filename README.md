@@ -64,6 +64,8 @@ The Express application exports its `app` for the Vercel Functions runtime and
 continues to use `app.listen()` during local development. Configure
 `SYNC_MODE=agent` on Vercel so the cloud function never attempts to connect
 directly to the terminal's private office IP address.
+Use `APP_TIMEZONE=Africa/Addis_Ababa` for attendance-day calculations because
+Vercel reserves the standard `TZ` environment-variable name.
 
 After deploying the backend, open:
 

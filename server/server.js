@@ -11,6 +11,9 @@ import os from "node:os";
 
 dotenv.config();
 
+const APP_TIMEZONE = process.env.APP_TIMEZONE || "Africa/Addis_Ababa";
+process.env.TZ = APP_TIMEZONE;
+
 const app = express();
 const PORT = Number(process.env.PORT) || 5000;
 const MONGODB_URI =
@@ -160,6 +163,7 @@ app.get("/api/deployment-status", async (_req, res) => {
         environment: process.env.VERCEL_ENV || process.env.NODE_ENV || "development",
         region: process.env.VERCEL_REGION || "local",
         commit: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) || null,
+        timezone: APP_TIMEZONE,
       },
       database: {
         status: "connected",
