@@ -93,6 +93,102 @@ const HrUser = mongoose.model("HrUser", hrUserSchema);
 
 let databaseInitialization;
 
+app.get("/", (_req, res) => {
+  res
+    .status(200)
+    .type("html")
+    .send(`<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>PUNCHER API — Deployment Ready</title>
+    <style>
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, sans-serif;
+        color: #d9fffa;
+        background:
+          radial-gradient(circle at 50% 0%, rgba(45, 212, 191, .18), transparent 38rem),
+          #061416;
+      }
+      main {
+        width: min(680px, 100%);
+        padding: clamp(28px, 6vw, 56px);
+        text-align: center;
+        border: 1px solid rgba(94, 234, 212, .18);
+        border-radius: 24px;
+        background: linear-gradient(145deg, rgba(12, 42, 44, .96), rgba(6, 25, 28, .96));
+        box-shadow: 0 32px 90px rgba(0, 0, 0, .38);
+      }
+      .mark {
+        display: grid;
+        place-items: center;
+        width: 72px;
+        height: 72px;
+        margin: 0 auto 24px;
+        border-radius: 22px;
+        font-size: 34px;
+        background: rgba(45, 212, 191, .12);
+        border: 1px solid rgba(94, 234, 212, .22);
+      }
+      .status {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 7px 12px;
+        border-radius: 999px;
+        color: #5eead4;
+        background: rgba(45, 212, 191, .09);
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: .08em;
+        text-transform: uppercase;
+      }
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #2dd4bf;
+        box-shadow: 0 0 16px #2dd4bf;
+      }
+      h1 { margin: 22px 0 12px; font-size: clamp(30px, 6vw, 46px); }
+      p { margin: 0 auto; max-width: 510px; color: #94a3b8; line-height: 1.7; }
+      a {
+        display: inline-block;
+        margin-top: 30px;
+        padding: 13px 20px;
+        border-radius: 12px;
+        color: #042f2e;
+        background: #2dd4bf;
+        font-weight: 750;
+        text-decoration: none;
+      }
+      a:hover { background: #5eead4; }
+      footer { margin-top: 30px; color: #52676c; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="mark" aria-hidden="true">✓</div>
+      <div class="status"><span class="dot"></span> API function online</div>
+      <h1>PUNCHER API is deployed</h1>
+      <p>
+        The attendance backend is running successfully. Verify the MongoDB
+        Atlas connection and synchronization mode to complete the deployment check.
+      </p>
+      <a href="/api/deployment-status">Verify deployment status</a>
+      <footer>Secure HR attendance and workforce reporting API</footer>
+    </main>
+  </body>
+</html>`);
+});
+
 async function initializeDatabase() {
   if (mongoose.connection.readyState === 1 && databaseInitialization) {
     return databaseInitialization;
