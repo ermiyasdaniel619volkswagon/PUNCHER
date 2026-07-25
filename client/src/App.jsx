@@ -27,6 +27,9 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+const API_BASE_URL = String(import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
+const apiUrl = (path) => `${API_BASE_URL}${path}`;
+
 const text = {
   en: {
     title: "HR Attendance Portal",
@@ -218,7 +221,7 @@ function Login({ onLogin, language, toggleLanguage }) {
     setLoading(true);
     setError("");
     try {
-      const response = await fetch("/api/auth/login", {
+      const response = await fetch(apiUrl("/api/auth/login"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
@@ -309,7 +312,7 @@ export default function App() {
   const locale = language === "am" ? "am-ET-u-ca-ethiopic" : "en-GB";
 
   const api = useCallback(async (path, options = {}) => {
-    const response = await fetch(path, {
+    const response = await fetch(apiUrl(path), {
       ...options,
       headers: { ...(options.headers || {}), Authorization: `Bearer ${token}` },
     });
@@ -409,7 +412,7 @@ export default function App() {
   const logout = () => { localStorage.removeItem("puncher-token"); localStorage.removeItem("puncher-user"); setToken(null); setUser(null); };
   const toggleLanguage = () => setLanguage((current) => { const next = current === "en" ? "am" : "en"; localStorage.setItem("puncher-language", next); return next; });
   const exportExcel = async () => {
-    const response = await fetch(`/api/attendance/today/export?lang=${language}`, { headers: { Authorization: `Bearer ${token}` } });
+    const response = await fetch(apiUrl(`/api/attendance/today/export?lang=${language}`), { headers: { Authorization: `Bearer ${token}` } });
     if (!response.ok) return setError("Export failed");
     const blob = await response.blob(); const url = URL.createObjectURL(blob);
     const link = document.createElement("a"); link.href = url; link.download = `attendance-today.xlsx`; link.click(); URL.revokeObjectURL(url);
