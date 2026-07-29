@@ -1,5 +1,8 @@
 # PUNCHER
 
+For the production HR-computer connector installation, follow
+[`docs/HR-CONNECTOR-SETUP.md`](docs/HR-CONNECTOR-SETUP.md).
+
 A local MERN MVP that synchronizes attendance events from a Hikvision terminal
 using HTTP Digest Authentication, deduplicates them in MongoDB, and displays the
 50 latest punches in a responsive React dashboard.

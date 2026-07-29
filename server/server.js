@@ -47,8 +47,26 @@ const JWT_SECRET = process.env.JWT_SECRET || "development-only-change-this-secre
 const HR_EMAIL = process.env.HR_EMAIL || "hr@company.local";
 const HR_PASSWORD = process.env.HR_PASSWORD || "ChangeMe123!";
 const IS_VERCEL = Boolean(process.env.VERCEL);
+const RUNTIME_ROLE =
+  process.env.RUNTIME_ROLE || (IS_VERCEL ? "api" : "server");
 const SYNC_MODE =
   process.env.SYNC_MODE || (IS_VERCEL ? "agent" : "direct");
+const IS_CONNECTOR = RUNTIME_ROLE === "connector";
+const SYNC_ON_STARTUP =
+  String(process.env.SYNC_ON_STARTUP || "true").toLowerCase() === "true";
+const PUNCH_SYNC_INTERVAL_SECONDS = Math.max(
+  15,
+  Number(process.env.PUNCH_SYNC_INTERVAL_SECONDS) || 60
+);
+const EMPLOYEE_SYNC_INTERVAL_HOURS = Math.max(
+  1,
+  Number(process.env.EMPLOYEE_SYNC_INTERVAL_HOURS) || 6
+);
+const MAX_BACKFILL_DAYS = Math.min(
+  90,
+  Math.max(1, Number(process.env.MAX_BACKFILL_DAYS) || 31)
+);
+const CONNECTOR_ID = process.env.CONNECTOR_ID || os.hostname() || "office-main";
 
 app.use(cors());
 app.use(express.json());
@@ -90,6 +108,25 @@ const hrUserSchema = new mongoose.Schema(
   { timestamps: true }
 );
 const HrUser = mongoose.model("HrUser", hrUserSchema);
+
+const connectorStateSchema = new mongoose.Schema(
+  {
+    connectorId: { type: String, required: true, unique: true },
+    computerName: String,
+    status: { type: String, default: "starting" },
+    terminalReachable: { type: Boolean, default: false },
+    lastAttemptAt: Date,
+    lastSuccessfulSyncAt: Date,
+    lastEmployeeSyncAt: Date,
+    lastHeartbeatAt: Date,
+    nextPunchSyncAt: Date,
+    addedPunches: { type: Number, default: 0 },
+    existingPunches: { type: Number, default: 0 },
+    lastError: String,
+  },
+  { timestamps: true }
+);
+const ConnectorState = mongoose.model("ConnectorState", connectorStateSchema);
 
 let databaseInitialization;
 
@@ -201,21 +238,27 @@ async function initializeDatabase() {
         `[database] Connected successfully (${IS_VERCEL ? "Vercel" : "local"} runtime).`
       );
 
-      const normalizedEmail = HR_EMAIL.toLowerCase();
-      const existingHr = await HrUser.findOne({ email: normalizedEmail });
-      if (!existingHr) {
-        await HrUser.create({
-          email: normalizedEmail,
-          passwordHash: await bcrypt.hash(HR_PASSWORD, 12),
-          name: "HR Administrator",
-          role: "hr",
-        });
-        console.log(`[database] Initial HR account created for ${HR_EMAIL}.`);
-      } else if (!(await bcrypt.compare(HR_PASSWORD, existingHr.passwordHash))) {
-        existingHr.passwordHash = await bcrypt.hash(HR_PASSWORD, 12);
-        await existingHr.save();
+      if (!IS_CONNECTOR) {
+        const normalizedEmail = HR_EMAIL.toLowerCase();
+        const existingHr = await HrUser.findOne({ email: normalizedEmail });
+        if (!existingHr) {
+          await HrUser.create({
+            email: normalizedEmail,
+            passwordHash: await bcrypt.hash(HR_PASSWORD, 12),
+            name: "HR Administrator",
+            role: "hr",
+          });
+          console.log(`[database] Initial HR account created for ${HR_EMAIL}.`);
+        } else if (!(await bcrypt.compare(HR_PASSWORD, existingHr.passwordHash))) {
+          existingHr.passwordHash = await bcrypt.hash(HR_PASSWORD, 12);
+          await existingHr.save();
+          console.log(
+            `[database] HR account password synchronized from the environment for ${HR_EMAIL}.`
+          );
+        }
+      } else {
         console.log(
-          `[database] HR account password synchronized from the environment for ${HR_EMAIL}.`
+          "[connector] HR account initialization skipped in connector runtime."
         );
       }
 
@@ -348,6 +391,64 @@ function getTodayRange() {
   const dayEnd = new Date(dayStart);
   dayEnd.setDate(dayEnd.getDate() + 1);
   return { dayStart, dayEnd };
+}
+
+function getSyncDayRange(dateValue) {
+  if (!dateValue) return getTodayRange();
+  const match = String(dateValue).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) {
+    const error = new Error("Sync date must use YYYY-MM-DD format.");
+    error.status = 400;
+    throw error;
+  }
+
+  const [, year, month, day] = match;
+  const dayStart = new Date(Number(year), Number(month) - 1, Number(day));
+  dayStart.setHours(0, 0, 0, 0);
+  if (
+    dayStart.getFullYear() !== Number(year) ||
+    dayStart.getMonth() !== Number(month) - 1 ||
+    dayStart.getDate() !== Number(day)
+  ) {
+    const error = new Error("Sync date is not a valid calendar date.");
+    error.status = 400;
+    throw error;
+  }
+
+  const { dayEnd: todayEnd } = getTodayRange();
+  if (dayStart >= todayEnd) {
+    const error = new Error("Future attendance dates cannot be synchronized.");
+    error.status = 400;
+    throw error;
+  }
+
+  const dayEnd = new Date(dayStart);
+  dayEnd.setDate(dayEnd.getDate() + 1);
+  return { dayStart, dayEnd };
+}
+
+function localDateKey(date) {
+  const pad = (value) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+function connectorBackfillDates(lastSuccessfulSyncAt) {
+  const { dayStart: today } = getTodayRange();
+  const earliest = new Date(today);
+  earliest.setDate(earliest.getDate() - (MAX_BACKFILL_DAYS - 1));
+
+  const start = lastSuccessfulSyncAt
+    ? new Date(lastSuccessfulSyncAt)
+    : new Date(today);
+  start.setHours(0, 0, 0, 0);
+  if (start < earliest) start.setTime(earliest.getTime());
+  if (start > today) start.setTime(today.getTime());
+
+  const dates = [];
+  for (const cursor = new Date(start); cursor <= today; cursor.setDate(cursor.getDate() + 1)) {
+    dates.push(localDateKey(cursor));
+  }
+  return dates;
 }
 
 function formatDeviceDateTime(date) {
@@ -717,6 +818,22 @@ app.get("/api/health", async (_req, res) => {
     database: mongoose.connection.readyState === 1 ? "connected" : "disconnected",
     synchronizationMode: SYNC_MODE,
     device,
+  });
+});
+
+app.get("/api/connector/status", async (_req, res) => {
+  const connectors = await ConnectorState.find()
+    .sort({ lastHeartbeatAt: -1 })
+    .lean();
+  const now = Date.now();
+  res.json({
+    connectors: connectors.map((connector) => ({
+      ...connector,
+      online:
+        connector.lastHeartbeatAt &&
+        now - new Date(connector.lastHeartbeatAt).getTime() <
+          Math.max(PUNCH_SYNC_INTERVAL_SECONDS * 3, 180) * 1000,
+    })),
   });
 });
 
@@ -1146,7 +1263,7 @@ app.get("/api/attendance/today/export", async (req, res) => {
   }
 });
 
-app.get("/api/sync-punches", requireDirectDevice, async (_req, res) => {
+app.get("/api/sync-punches", requireDirectDevice, async (req, res) => {
   const syncStartedAt = Date.now();
   const requestId = `${Date.now().toString(36)}-${Math.random()
     .toString(36)
@@ -1156,6 +1273,10 @@ app.get("/api/sync-punches", requireDirectDevice, async (_req, res) => {
   );
 
   try {
+    const { dayStart: syncDayStart, dayEnd: syncDayEnd } = getSyncDayRange(
+      req.query.date
+    );
+    const syncDate = localDateKey(syncDayStart);
     const probe = await tcpProbe(DEVICE_IP, DEVICE_PORT);
     console.log(
       `[sync:${requestId}] TCP probe: ${probe.reachable ? "reachable" : "unreachable"} in ${probe.latencyMs}ms${probe.code ? ` (${probe.code})` : ""}`
@@ -1172,7 +1293,6 @@ app.get("/api/sync-punches", requireDirectDevice, async (_req, res) => {
     const seenPageSignatures = new Set();
     let searchResultPosition = 0;
     let reportedTotalMatches = null;
-    const { dayStart: syncDayStart, dayEnd: syncDayEnd } = getTodayRange();
     const deviceStartTime = formatDeviceDateTime(syncDayStart);
     const deviceEndTime = formatDeviceDateTime(
       new Date(syncDayEnd.getTime() - 1000)
@@ -1345,10 +1465,9 @@ app.get("/api/sync-punches", requireDirectDevice, async (_req, res) => {
       }
     }
 
-    const { dayStart, dayEnd } = getTodayRange();
-    const attendanceDate = dayStart.toISOString();
+    const attendanceDate = syncDayStart.toISOString();
     const punches = await Punch.find({
-      punchTime: { $gte: dayStart, $lt: dayEnd },
+      punchTime: { $gte: syncDayStart, $lt: syncDayEnd },
     })
       .sort({ punchTime: -1 })
       .lean();
@@ -1363,6 +1482,7 @@ app.get("/api/sync-punches", requireDirectDevice, async (_req, res) => {
       punches,
       attendanceDate,
       sync: {
+        date: syncDate,
         received: logs.length,
         valid: attendanceEvents.length,
         added: databaseSummary.inserted,
@@ -1382,7 +1502,7 @@ app.get("/api/sync-punches", requireDirectDevice, async (_req, res) => {
       responsePreview: error.responsePreview || null,
       hint,
     });
-    res.status(502).json({
+    res.status(error.status === 400 ? 400 : 502).json({
       message: "Could not synchronize with the attendance terminal.",
       detail: error.message,
       diagnostic: {
@@ -1395,11 +1515,258 @@ app.get("/api/sync-punches", requireDirectDevice, async (_req, res) => {
   }
 });
 
+let localServer;
+let punchTimer;
+let employeeTimer;
+let heartbeatTimer;
+let punchSyncRunning = false;
+let employeeSyncRunning = false;
+let shuttingDown = false;
+
+function connectorAuthorization() {
+  return `Bearer ${jwt.sign(
+    {
+      sub: `connector:${CONNECTOR_ID}`,
+      role: "connector",
+      name: CONNECTOR_ID,
+    },
+    JWT_SECRET,
+    { expiresIn: "10m" }
+  )}`;
+}
+
+async function callLocalConnectorApi(path, options = {}) {
+  const response = await fetch(`http://127.0.0.1:${PORT}${path}`, {
+    ...options,
+    headers: {
+      ...(options.headers || {}),
+      Authorization: connectorAuthorization(),
+    },
+    signal: AbortSignal.timeout(
+      Math.max(DEVICE_TIMEOUT_MS * 2, 30000)
+    ),
+  });
+  const responseText = await response.text();
+  let data;
+  try {
+    data = responseText ? JSON.parse(responseText) : {};
+  } catch {
+    data = { detail: responseText.slice(0, 500) };
+  }
+  if (!response.ok) {
+    const error = new Error(
+      data.detail || data.message || `Connector API returned HTTP ${response.status}`
+    );
+    error.status = response.status;
+    error.data = data;
+    throw error;
+  }
+  return data;
+}
+
+async function updateConnectorState(values) {
+  try {
+    await ConnectorState.updateOne(
+      { connectorId: CONNECTOR_ID },
+      {
+        $set: {
+          connectorId: CONNECTOR_ID,
+          computerName: os.hostname(),
+          lastHeartbeatAt: new Date(),
+          ...values,
+        },
+      },
+      { upsert: true }
+    );
+  } catch (error) {
+    console.error("[connector] Could not update connector status:", error.message);
+  }
+}
+
+async function runEmployeeConnectorSync(reason = "scheduled") {
+  if (employeeSyncRunning || shuttingDown) {
+    console.log(
+      `[connector:employees] ${employeeSyncRunning ? "Skipped because a previous employee sync is active" : "Skipped during shutdown"}.`
+    );
+    return;
+  }
+  employeeSyncRunning = true;
+  const startedAt = Date.now();
+  console.log(`[connector:employees] Starting ${reason} employee directory sync.`);
+  try {
+    const result = await callLocalConnectorApi("/api/employees/sync", {
+      method: "POST",
+    });
+    console.log(
+      `[connector:employees] SUCCESS: ${result.received || 0} received, ${result.stored || 0} stored, ${Date.now() - startedAt}ms.`
+    );
+    await updateConnectorState({
+      status: "online",
+      terminalReachable: true,
+      lastEmployeeSyncAt: new Date(),
+      lastError: null,
+    });
+  } catch (error) {
+    console.error(`[connector:employees] FAILED: ${error.message}`);
+    await updateConnectorState({
+      status: "degraded",
+      terminalReachable: false,
+      lastError: `Employee sync: ${error.message}`,
+    });
+  } finally {
+    employeeSyncRunning = false;
+  }
+}
+
+async function runPunchConnectorSync({ backfill = false, reason = "scheduled" } = {}) {
+  if (punchSyncRunning || shuttingDown) {
+    console.log(
+      `[connector:punches] ${punchSyncRunning ? "Skipped because a previous punch sync is active" : "Skipped during shutdown"}.`
+    );
+    return;
+  }
+  punchSyncRunning = true;
+  const startedAt = Date.now();
+  await updateConnectorState({
+    status: "synchronizing",
+    lastAttemptAt: new Date(),
+    nextPunchSyncAt: new Date(
+      Date.now() + PUNCH_SYNC_INTERVAL_SECONDS * 1000
+    ),
+  });
+
+  try {
+    const currentState = await ConnectorState.findOne({
+      connectorId: CONNECTOR_ID,
+    }).lean();
+    const dates = backfill
+      ? connectorBackfillDates(currentState?.lastSuccessfulSyncAt)
+      : [localDateKey(new Date())];
+    let added = 0;
+    let existing = 0;
+
+    console.log(
+      `[connector:punches] Starting ${reason} sync for ${dates.length} date(s): ${dates.join(", ")}.`
+    );
+    for (const date of dates) {
+      if (shuttingDown) break;
+      const result = await callLocalConnectorApi(
+        `/api/sync-punches?date=${encodeURIComponent(date)}`
+      );
+      added += Number(result.sync?.added || 0);
+      existing += Number(result.sync?.existing || 0);
+      console.log(
+        `[connector:punches] ${date}: ${result.sync?.added || 0} new, ${result.sync?.existing || 0} existing.`
+      );
+    }
+
+    const completedAt = new Date();
+    await updateConnectorState({
+      status: "online",
+      terminalReachable: true,
+      lastSuccessfulSyncAt: completedAt,
+      addedPunches: added,
+      existingPunches: existing,
+      lastError: null,
+      nextPunchSyncAt: new Date(
+        Date.now() + PUNCH_SYNC_INTERVAL_SECONDS * 1000
+      ),
+    });
+    console.log(
+      `[connector:punches] SUCCESS: ${added} new, ${existing} existing, ${Date.now() - startedAt}ms.`
+    );
+  } catch (error) {
+    console.error(`[connector:punches] FAILED: ${error.message}`);
+    await updateConnectorState({
+      status: "degraded",
+      terminalReachable: false,
+      lastError: error.message,
+      nextPunchSyncAt: new Date(
+        Date.now() + PUNCH_SYNC_INTERVAL_SECONDS * 1000
+      ),
+    });
+  } finally {
+    punchSyncRunning = false;
+  }
+}
+
+async function startConnectorScheduler() {
+  console.log("\n============================================================");
+  console.log("PUNCHER OFFICE CONNECTOR");
+  console.log("============================================================");
+  console.log(`Connector ID        : ${CONNECTOR_ID}`);
+  console.log(`Computer            : ${os.hostname()}`);
+  console.log(`Atlas database      : connected`);
+  console.log(
+    `Terminal            : ${DEVICE_PROTOCOL}://${DEVICE_IP}:${DEVICE_PORT}`
+  );
+  console.log(`Punch interval      : ${PUNCH_SYNC_INTERVAL_SECONDS} seconds`);
+  console.log(`Employee interval   : ${EMPLOYEE_SYNC_INTERVAL_HOURS} hours`);
+  console.log(`Maximum backfill    : ${MAX_BACKFILL_DAYS} days`);
+  console.log(`Timezone            : ${APP_TIMEZONE}`);
+  console.log("============================================================\n");
+
+  await updateConnectorState({
+    status: "starting",
+    terminalReachable: false,
+    lastError: null,
+    nextPunchSyncAt: new Date(),
+  });
+
+  if (SYNC_ON_STARTUP) {
+    await runEmployeeConnectorSync("startup");
+    await runPunchConnectorSync({ backfill: true, reason: "startup/backfill" });
+  } else {
+    console.log("[connector] Startup synchronization is disabled.");
+  }
+
+  punchTimer = setInterval(
+    () => runPunchConnectorSync({ reason: "interval" }),
+    PUNCH_SYNC_INTERVAL_SECONDS * 1000
+  );
+  employeeTimer = setInterval(
+    () => runEmployeeConnectorSync("interval"),
+    EMPLOYEE_SYNC_INTERVAL_HOURS * 60 * 60 * 1000
+  );
+  heartbeatTimer = setInterval(
+    () =>
+      updateConnectorState({
+        status:
+          punchSyncRunning || employeeSyncRunning ? "synchronizing" : "online",
+      }),
+    Math.min(PUNCH_SYNC_INTERVAL_SECONDS, 60) * 1000
+  );
+  console.log("[connector] Automatic synchronization scheduler is active.");
+}
+
+async function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[shutdown] ${signal} received; stopping PUNCHER cleanly.`);
+  clearInterval(punchTimer);
+  clearInterval(employeeTimer);
+  clearInterval(heartbeatTimer);
+  if (IS_CONNECTOR) {
+    await updateConnectorState({
+      status: "offline",
+      nextPunchSyncAt: null,
+    });
+  }
+  if (localServer) {
+    await new Promise((resolve) => localServer.close(resolve));
+  }
+  await mongoose.disconnect();
+  process.exit(0);
+}
+
 async function startServer() {
   try {
     await initializeDatabase();
-    app.listen(PORT, () => {
-      console.log(`PUNCHER API running at http://localhost:${PORT}`);
+    const listenHost = IS_CONNECTOR ? "127.0.0.1" : "0.0.0.0";
+    localServer = app.listen(PORT, listenHost, () => {
+      console.log(
+        `PUNCHER ${IS_CONNECTOR ? "connector API" : "API"} running at http://127.0.0.1:${PORT}`
+      );
       console.log(
         `Deployment confirmation: http://localhost:${PORT}/api/deployment-status`
       );
@@ -1407,7 +1774,11 @@ async function startServer() {
         `Hikvision target: ${DEVICE_PROTOCOL}://${DEVICE_IP}:${DEVICE_PORT} (user: ${API_USER}, password: configured but hidden)`
       );
       console.log(`Device diagnostics: http://localhost:${PORT}/api/health`);
-      if (SYNC_MODE === "direct") {
+      if (IS_CONNECTOR) {
+        startConnectorScheduler().catch((error) => {
+          console.error("[connector] Scheduler startup failed:", error);
+        });
+      } else if (SYNC_MODE === "direct") {
         logDeviceDiagnostics().catch((error) => {
           console.error("Startup device diagnostics failed:", error.message);
         });
@@ -1424,6 +1795,8 @@ async function startServer() {
 }
 
 if (!IS_VERCEL) {
+  process.once("SIGINT", () => shutdown("SIGINT"));
+  process.once("SIGTERM", () => shutdown("SIGTERM"));
   startServer();
 }
 
