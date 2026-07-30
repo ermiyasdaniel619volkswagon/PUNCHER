@@ -302,6 +302,7 @@ export default function App() {
   const [historyPage, setHistoryPage] = useState(1);
   const [historyLimit, setHistoryLimit] = useState(10);
   const [historySearch, setHistorySearch] = useState("");
+  const [historyDate, setHistoryDate] = useState("");
   const [historyEmployees, setHistoryEmployees] = useState([]);
   const [historyPeriod, setHistoryPeriod] = useState("30");
   const [historyFrom, setHistoryFrom] = useState("");
@@ -426,6 +427,7 @@ export default function App() {
     () =>
       filterAndSortHistory(historyRows, {
         search: historySearch,
+        date: historyDate,
         employees: historyEmployees,
         period: historyPeriod,
         from: historyFrom,
@@ -435,9 +437,9 @@ export default function App() {
         verification: historyVerification,
         sort: historySort,
       }),
-    [historyRows, historySearch, historyEmployees, historyPeriod, historyFrom, historyTo, historyTimeFrom, historyTimeTo, historyVerification, historySort]
+    [historyRows, historySearch, historyDate, historyEmployees, historyPeriod, historyFrom, historyTo, historyTimeFrom, historyTimeTo, historyVerification, historySort]
   );
-  useEffect(() => setHistoryPage(1), [historyLimit, historySearch, historyEmployees, historyPeriod, historyFrom, historyTo, historyTimeFrom, historyTimeTo, historyVerification, historySort]);
+  useEffect(() => setHistoryPage(1), [historyLimit, historySearch, historyDate, historyEmployees, historyPeriod, historyFrom, historyTo, historyTimeFrom, historyTimeTo, historyVerification, historySort]);
   const attendancePagination = useMemo(() => paginate(sortedAttendance, attendancePage, attendanceLimit), [sortedAttendance, attendancePage, attendanceLimit]);
   const historyPagination = useMemo(() => paginate(filteredHistory, historyPage, historyLimit), [filteredHistory, historyPage, historyLimit]);
 
@@ -525,6 +527,8 @@ export default function App() {
                   employeeOptions={historyEmployeeOptions}
                   search={historySearch}
                   setSearch={setHistorySearch}
+                  date={historyDate}
+                  setDate={setHistoryDate}
                   selectedEmployees={historyEmployees}
                   setSelectedEmployees={setHistoryEmployees}
                   period={historyPeriod}
@@ -571,7 +575,10 @@ function filterAndSortHistory(rows, filters) {
   const now = new Date();
   let start = null;
   let end = null;
-  if (filters.period === "custom") {
+  if (filters.date) {
+    start = new Date(`${filters.date}T00:00:00`);
+    end = new Date(`${filters.date}T23:59:59.999`);
+  } else if (filters.period === "custom") {
     if (filters.from) start = new Date(`${filters.from}T00:00:00`);
     if (filters.to) end = new Date(`${filters.to}T23:59:59.999`);
   } else if (filters.period !== "all") {
@@ -716,7 +723,7 @@ function EmployeeTable({ rows, t, time, status }) {
   </Table>;
 }
 function HistoryFilters({
-  rows, filteredCount, employeeOptions, search, setSearch, selectedEmployees,
+  rows, filteredCount, employeeOptions, search, setSearch, date, setDate, selectedEmployees,
   setSelectedEmployees, period, setPeriod, from, setFrom, to, setTo,
   timeFrom, setTimeFrom, timeTo, setTimeTo, verification, setVerification,
   sort, setSort,
@@ -726,7 +733,7 @@ function HistoryFilters({
     `${employee.employeeName} ${employee.employeeId}`.toLocaleLowerCase().includes(employeeSearch.trim().toLocaleLowerCase())
   );
   const reset = () => {
-    setSearch(""); setSelectedEmployees([]); setPeriod("30"); setFrom(""); setTo("");
+    setSearch(""); setDate(""); setSelectedEmployees([]); setPeriod("30"); setFrom(""); setTo("");
     setTimeFrom(""); setTimeTo(""); setVerification("all"); setSort("newest");
   };
   const toggleEmployee = (id) =>
@@ -746,6 +753,10 @@ function HistoryFilters({
       <label className="history-control history-search-control">
         <span>Employee name or ID</span>
         <div><Search size={16} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search by name or employee ID" /></div>
+      </label>
+      <label className="history-control">
+        <span>Search by date</span>
+        <input type="date" value={date} max={dateInputValue(new Date())} onChange={(event) => setDate(event.target.value)} />
       </label>
       <div className="history-control">
         <span>Employees</span>
