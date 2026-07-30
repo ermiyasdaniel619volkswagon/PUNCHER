@@ -19,6 +19,7 @@ import {
   RefreshCw,
   Search,
   SlidersHorizontal,
+  RotateCcw,
   ShieldCheck,
   Sparkles,
   TrendingUp,
@@ -300,6 +301,15 @@ export default function App() {
   const [attendanceLimit, setAttendanceLimit] = useState(10);
   const [historyPage, setHistoryPage] = useState(1);
   const [historyLimit, setHistoryLimit] = useState(10);
+  const [historySearch, setHistorySearch] = useState("");
+  const [historyEmployees, setHistoryEmployees] = useState([]);
+  const [historyPeriod, setHistoryPeriod] = useState("30");
+  const [historyFrom, setHistoryFrom] = useState("");
+  const [historyTo, setHistoryTo] = useState("");
+  const [historyTimeFrom, setHistoryTimeFrom] = useState("");
+  const [historyTimeTo, setHistoryTimeTo] = useState("");
+  const [historyVerification, setHistoryVerification] = useState("all");
+  const [historySort, setHistorySort] = useState("newest");
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("all");
   const [arrivalFilter, setArrivalFilter] = useState("all");
@@ -337,7 +347,7 @@ export default function App() {
       const [a, initialEmployees, h] = await Promise.all([
         api("/api/attendance/today"),
         api("/api/employees"),
-        api("/api/history?days=30"),
+        api("/api/history?days=365"),
       ]);
       let e = initialEmployees;
       if (!e.summary?.total) {
@@ -398,9 +408,38 @@ export default function App() {
     [filteredAttendance, attendanceSort]
   );
   useEffect(() => setAttendancePage(1), [arrivalFilter, departureFilter, lunchFilter, attendanceSort, attendanceLimit]);
-  useEffect(() => setHistoryPage(1), [historyLimit]);
+  const historyEmployeeOptions = useMemo(() => {
+    const byId = new Map();
+    historyRows.forEach((row) => {
+      if (row.employeeId && !byId.has(String(row.employeeId))) {
+        byId.set(String(row.employeeId), {
+          employeeId: String(row.employeeId),
+          employeeName: row.employeeName || "Unknown employee",
+        });
+      }
+    });
+    return [...byId.values()].sort((a, b) =>
+      a.employeeName.localeCompare(b.employeeName, undefined, { sensitivity: "base" })
+    );
+  }, [historyRows]);
+  const filteredHistory = useMemo(
+    () =>
+      filterAndSortHistory(historyRows, {
+        search: historySearch,
+        employees: historyEmployees,
+        period: historyPeriod,
+        from: historyFrom,
+        to: historyTo,
+        timeFrom: historyTimeFrom,
+        timeTo: historyTimeTo,
+        verification: historyVerification,
+        sort: historySort,
+      }),
+    [historyRows, historySearch, historyEmployees, historyPeriod, historyFrom, historyTo, historyTimeFrom, historyTimeTo, historyVerification, historySort]
+  );
+  useEffect(() => setHistoryPage(1), [historyLimit, historySearch, historyEmployees, historyPeriod, historyFrom, historyTo, historyTimeFrom, historyTimeTo, historyVerification, historySort]);
   const attendancePagination = useMemo(() => paginate(sortedAttendance, attendancePage, attendanceLimit), [sortedAttendance, attendancePage, attendanceLimit]);
-  const historyPagination = useMemo(() => paginate(historyRows, historyPage, historyLimit), [historyRows, historyPage, historyLimit]);
+  const historyPagination = useMemo(() => paginate(filteredHistory, historyPage, historyLimit), [filteredHistory, historyPage, historyLimit]);
 
   const time = (value) => value ? new Date(value).toLocaleString(locale, { dateStyle: "medium", timeStyle: "short" }) : "—";
   const shortTime = (value) => value ? new Date(value).toLocaleTimeString(locale, { hour: "numeric", minute: "2-digit", hour12: true }) : "—";
@@ -479,7 +518,33 @@ export default function App() {
                   t={t}
                 />
               </>}
-              {view === "history" && <><HistoryTable rows={historyPagination.items} t={t} time={time} /><PaginationPro data={historyPagination} page={historyPage} setPage={setHistoryPage} limit={historyLimit} setLimit={setHistoryLimit} t={t} /></>}
+              {view === "history" && <>
+                <HistoryFilters
+                  rows={historyRows}
+                  filteredCount={filteredHistory.length}
+                  employeeOptions={historyEmployeeOptions}
+                  search={historySearch}
+                  setSearch={setHistorySearch}
+                  selectedEmployees={historyEmployees}
+                  setSelectedEmployees={setHistoryEmployees}
+                  period={historyPeriod}
+                  setPeriod={setHistoryPeriod}
+                  from={historyFrom}
+                  setFrom={setHistoryFrom}
+                  to={historyTo}
+                  setTo={setHistoryTo}
+                  timeFrom={historyTimeFrom}
+                  setTimeFrom={setHistoryTimeFrom}
+                  timeTo={historyTimeTo}
+                  setTimeTo={setHistoryTimeTo}
+                  verification={historyVerification}
+                  setVerification={setHistoryVerification}
+                  sort={historySort}
+                  setSort={setHistorySort}
+                />
+                <HistoryTable rows={historyPagination.items} t={t} time={time} />
+                <PaginationPro data={historyPagination} page={historyPage} setPage={setHistoryPage} limit={historyLimit} setLimit={setHistoryLimit} t={t} />
+              </>}
               {view === "analytics" && <AnalyticsPro t={t} attendance={attendanceSummary} employees={employeeSummary} />}
               {view === "export" && <Panel title={t.exporting}><Download size={40} className="mb-4 text-emerald-600" /><p className="mb-6 max-w-xl text-slate-500">{t.exportHint}</p><button onClick={exportExcel} className="flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-3 font-semibold text-white"><Download size={18} />{t.export}</button></Panel>}
             </>
@@ -495,6 +560,49 @@ function paginate(items, page, limit) {
   const totalPages = Math.max(1, Math.ceil(totalItems / limit));
   const safePage = Math.min(page, totalPages);
   return { items: items.slice((safePage - 1) * limit, safePage * limit), page: safePage, limit, totalItems, totalPages };
+}
+function dateInputValue(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+function filterAndSortHistory(rows, filters) {
+  const now = new Date();
+  let start = null;
+  let end = null;
+  if (filters.period === "custom") {
+    if (filters.from) start = new Date(`${filters.from}T00:00:00`);
+    if (filters.to) end = new Date(`${filters.to}T23:59:59.999`);
+  } else if (filters.period !== "all") {
+    start = new Date(now);
+    start.setHours(0, 0, 0, 0);
+    start.setDate(start.getDate() - Math.max(0, Number(filters.period) - 1));
+    end = new Date(now);
+    end.setHours(23, 59, 59, 999);
+  }
+  const needle = filters.search.trim().toLocaleLowerCase();
+  const selected = new Set(filters.employees);
+  const filtered = rows.filter((row) => {
+    const punch = new Date(row.punchTime);
+    if (Number.isNaN(punch.getTime())) return false;
+    if (needle && !`${row.employeeName || ""} ${row.employeeId || ""}`.toLocaleLowerCase().includes(needle)) return false;
+    if (selected.size && !selected.has(String(row.employeeId))) return false;
+    if (start && punch < start) return false;
+    if (end && punch > end) return false;
+    const clock = `${String(punch.getHours()).padStart(2, "0")}:${String(punch.getMinutes()).padStart(2, "0")}`;
+    if (filters.timeFrom && clock < filters.timeFrom) return false;
+    if (filters.timeTo && clock > filters.timeTo) return false;
+    if (filters.verification !== "all" && String(row.verifyMode ?? 0) !== filters.verification) return false;
+    return true;
+  });
+  return filtered.sort((a, b) => {
+    if (filters.sort === "oldest") return new Date(a.punchTime) - new Date(b.punchTime);
+    if (filters.sort === "name-asc") return (a.employeeName || "").localeCompare(b.employeeName || "", undefined, { sensitivity: "base" }) || new Date(b.punchTime) - new Date(a.punchTime);
+    if (filters.sort === "name-desc") return (b.employeeName || "").localeCompare(a.employeeName || "", undefined, { sensitivity: "base" }) || new Date(b.punchTime) - new Date(a.punchTime);
+    if (filters.sort === "id-asc") return String(a.employeeId || "").localeCompare(String(b.employeeId || ""), undefined, { numeric: true }) || new Date(b.punchTime) - new Date(a.punchTime);
+    return new Date(b.punchTime) - new Date(a.punchTime);
+  });
 }
 function sortAttendanceRows(rows, sortBy) {
   const arrivalOrder = { "Early comer": 1, "Moderate comer": 2, "Late comer": 3 };
@@ -607,6 +715,62 @@ function EmployeeTable({ rows, t, time, status }) {
     </tr>) : <tr><td colSpan="5" className="px-5 py-16 text-center text-slate-500">{t.noData}</td></tr>}
   </Table>;
 }
+function HistoryFilters({
+  rows, filteredCount, employeeOptions, search, setSearch, selectedEmployees,
+  setSelectedEmployees, period, setPeriod, from, setFrom, to, setTo,
+  timeFrom, setTimeFrom, timeTo, setTimeTo, verification, setVerification,
+  sort, setSort,
+}) {
+  const [employeeSearch, setEmployeeSearch] = useState("");
+  const visibleEmployees = employeeOptions.filter((employee) =>
+    `${employee.employeeName} ${employee.employeeId}`.toLocaleLowerCase().includes(employeeSearch.trim().toLocaleLowerCase())
+  );
+  const reset = () => {
+    setSearch(""); setSelectedEmployees([]); setPeriod("30"); setFrom(""); setTo("");
+    setTimeFrom(""); setTimeTo(""); setVerification("all"); setSort("newest");
+  };
+  const toggleEmployee = (id) =>
+    setSelectedEmployees((current) =>
+      current.includes(id) ? current.filter((value) => value !== id) : [...current, id]
+    );
+  return <section className="history-filter-panel mb-5" aria-label="History filters">
+    <div className="history-filter-heading">
+      <div>
+        <span className="eyebrow"><SlidersHorizontal size={13} /> Advanced history search</span>
+        <h2>Find employee punch records</h2>
+        <p>Combine employee, date, time and verification filters for an accurate audit view.</p>
+      </div>
+      <div className="history-results"><b>{filteredCount}</b><span>of {rows.length} punches</span></div>
+    </div>
+    <div className="history-filter-grid">
+      <label className="history-control history-search-control">
+        <span>Employee name or ID</span>
+        <div><Search size={16} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search by name or employee ID" /></div>
+      </label>
+      <div className="history-control">
+        <span>Employees</span>
+        <details className="employee-picker">
+          <summary>{selectedEmployees.length ? `${selectedEmployees.length} employee${selectedEmployees.length === 1 ? "" : "s"} selected` : "All employees"}</summary>
+          <div className="employee-picker-menu">
+            <div className="employee-picker-search"><Search size={15} /><input value={employeeSearch} onChange={(event) => setEmployeeSearch(event.target.value)} placeholder="Find employee" /></div>
+            <div className="employee-picker-actions"><button type="button" onClick={() => setSelectedEmployees(employeeOptions.map((employee) => employee.employeeId))}>Select all</button><button type="button" onClick={() => setSelectedEmployees([])}>Clear</button></div>
+            <div className="employee-picker-list">
+              {visibleEmployees.map((employee) => <label key={employee.employeeId}><input type="checkbox" checked={selectedEmployees.includes(employee.employeeId)} onChange={() => toggleEmployee(employee.employeeId)} /><span><b>{employee.employeeName}</b><small>ID {employee.employeeId}</small></span></label>)}
+            </div>
+          </div>
+        </details>
+      </div>
+      <label className="history-control"><span>Date period</span><select value={period} onChange={(event) => setPeriod(event.target.value)}><option value="1">Today</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="90">Last 90 days</option><option value="365">Last 12 months</option><option value="all">All loaded records</option><option value="custom">Custom date range</option></select></label>
+      <label className="history-control"><span>Verification method</span><select value={verification} onChange={(event) => setVerification(event.target.value)}><option value="all">All methods</option><option value="1">Fingerprint</option><option value="3">Face / card</option><option value="4">Password / PIN</option><option value="0">Other / device default</option></select></label>
+      {period === "custom" && <><label className="history-control"><span>From date</span><input type="date" value={from} max={to || dateInputValue(new Date())} onChange={(event) => setFrom(event.target.value)} /></label><label className="history-control"><span>To date</span><input type="date" value={to} min={from} max={dateInputValue(new Date())} onChange={(event) => setTo(event.target.value)} /></label></>}
+      <label className="history-control"><span>Time from</span><input type="time" value={timeFrom} onChange={(event) => setTimeFrom(event.target.value)} /></label>
+      <label className="history-control"><span>Time to</span><input type="time" value={timeTo} onChange={(event) => setTimeTo(event.target.value)} /></label>
+      <label className="history-control"><span>Sort results</span><select value={sort} onChange={(event) => setSort(event.target.value)}><option value="newest">Newest punches first</option><option value="oldest">Oldest punches first</option><option value="name-asc">Employee name A–Z</option><option value="name-desc">Employee name Z–A</option><option value="id-asc">Employee ID</option></select></label>
+      <button type="button" onClick={reset} className="history-reset"><RotateCcw size={16} /> Reset filters</button>
+    </div>
+    {selectedEmployees.length > 0 && <div className="history-selection-summary"><span>Filtering {selectedEmployees.length} selected employee{selectedEmployees.length === 1 ? "" : "s"}</span><button type="button" onClick={() => setSelectedEmployees([])}>Show all employees</button></div>}
+  </section>;
+}
 function Pagination({ data, page, setPage, limit, setLimit, t }) {
   const start = data.totalItems ? (data.page - 1) * data.limit + 1 : 0;
   const end = Math.min(data.page * data.limit, data.totalItems || 0);
@@ -615,7 +779,10 @@ function Pagination({ data, page, setPage, limit, setLimit, t }) {
     <div className="flex items-center gap-2"><button onClick={() => setPage(Math.max(1, page - 1))} disabled={page <= 1} className="rounded-lg border border-slate-200 px-3 py-2 disabled:opacity-40">{t.previous}</button><span className="min-w-24 text-center">{t.page} {data.page || 1} {t.of} {data.totalPages || 1}</span><button onClick={() => setPage(Math.min(data.totalPages || 1, page + 1))} disabled={page >= (data.totalPages || 1)} className="rounded-lg border border-slate-200 px-3 py-2 disabled:opacity-40">{t.next}</button></div>
   </div>;
 }
-function HistoryTable({ rows, t, time }) { return <Table headers={[t.employee, t.id, t.lastPunch]}>{rows.map((r) => <tr key={r.logId}><td className="px-5 py-4 font-medium">{r.employeeName}</td><td className="px-5 py-4 text-slate-400">{r.employeeId}</td><td className="px-5 py-4">{time(r.punchTime)}</td></tr>)}</Table>; }
+function verificationLabel(value) {
+  return { 1: "Fingerprint", 3: "Face / card", 4: "Password / PIN", 0: "Device default" }[Number(value)] || `Method ${value}`;
+}
+function HistoryTable({ rows, t, time }) { return <Table headers={[t.employee, t.id, "Punch date and time", "Verification method"]}>{rows.length ? rows.map((r) => <tr key={r.logId} className="hover:bg-emerald-50/40"><td className="px-5 py-4 font-medium text-slate-900">{r.employeeName}</td><td className="px-5 py-4 text-slate-400">{r.employeeId}</td><td className="px-5 py-4">{time(r.punchTime)}</td><td className="px-5 py-4"><span className="verification-badge">{verificationLabel(r.verifyMode)}</span></td></tr>) : <tr><td colSpan="4" className="px-5 py-16 text-center text-slate-500">{t.noData}</td></tr>}</Table>; }
 function Analytics({ t, attendance, employees }) { const items = [[t.totalEmployees, employees.total], [t.punchedToday, employees.punchedToday], [t.notToday, employees.notToday], [t.inactiveWeek, employees.inactiveWeek], [t.inactiveMonth, employees.inactiveMonth], [t.early, attendance.earlyComers], [t.moderate, attendance.moderateComers], [t.late, attendance.lateComers]]; const max = Math.max(...items.map(([, v]) => v || 0), 1); return <Panel title={t.analytics}><div className="space-y-5">{items.map(([label, value]) => <div key={label}><div className="mb-2 flex justify-between text-sm text-slate-700"><span>{label}</span><b>{value || 0}</b></div><div className="h-2 rounded-full bg-slate-100"><div className="h-full rounded-full bg-emerald-500" style={{ width: `${((value || 0) / max) * 100}%` }} /></div></div>)}</div></Panel>; }
 
 function PaginationPro({ data, page, setPage, limit, setLimit, t }) {
