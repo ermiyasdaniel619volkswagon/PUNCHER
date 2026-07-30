@@ -309,7 +309,7 @@ export default function App() {
   const [historyTo, setHistoryTo] = useState("");
   const [historyTimeFrom, setHistoryTimeFrom] = useState("");
   const [historyTimeTo, setHistoryTimeTo] = useState("");
-  const [historyVerification, setHistoryVerification] = useState("all");
+  const [historyArrival, setHistoryArrival] = useState("all");
   const [historySort, setHistorySort] = useState("newest");
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("all");
@@ -358,7 +358,7 @@ export default function App() {
       setAttendance(a.attendance || []); setAttendanceSummary(a.summary || {});
       setEmployees(e.employees || []); setEmployeeSummary(e.summary || {});
       setEmployeePagination(e.pagination || {});
-      setHistoryRows(h.punches || []);
+      setHistoryRows(h.attendance || []);
     } catch (loadError) { setError(loadError.message); }
     finally { setLoading(false); }
   }, [api, token]);
@@ -434,12 +434,12 @@ export default function App() {
         to: historyTo,
         timeFrom: historyTimeFrom,
         timeTo: historyTimeTo,
-        verification: historyVerification,
+        arrival: historyArrival,
         sort: historySort,
       }),
-    [historyRows, historySearch, historyDate, historyEmployees, historyPeriod, historyFrom, historyTo, historyTimeFrom, historyTimeTo, historyVerification, historySort]
+    [historyRows, historySearch, historyDate, historyEmployees, historyPeriod, historyFrom, historyTo, historyTimeFrom, historyTimeTo, historyArrival, historySort]
   );
-  useEffect(() => setHistoryPage(1), [historyLimit, historySearch, historyDate, historyEmployees, historyPeriod, historyFrom, historyTo, historyTimeFrom, historyTimeTo, historyVerification, historySort]);
+  useEffect(() => setHistoryPage(1), [historyLimit, historySearch, historyDate, historyEmployees, historyPeriod, historyFrom, historyTo, historyTimeFrom, historyTimeTo, historyArrival, historySort]);
   const attendancePagination = useMemo(() => paginate(sortedAttendance, attendancePage, attendanceLimit), [sortedAttendance, attendancePage, attendanceLimit]);
   const historyPagination = useMemo(() => paginate(filteredHistory, historyPage, historyLimit), [filteredHistory, historyPage, historyLimit]);
 
@@ -480,7 +480,7 @@ export default function App() {
         <div className={`absolute bottom-4 left-3 right-3 rounded-2xl bg-black/15 p-3 ${collapsed ? "lg:flex lg:justify-center lg:p-2" : ""}`}><div className={collapsed ? "lg:hidden" : ""}><p className="truncate text-sm font-medium">{user?.name}</p><p className="mb-3 truncate text-xs text-emerald-200">{user?.email}</p></div><button title={t.logout} onClick={logout} className={`flex items-center gap-2 text-sm text-rose-100 hover:text-white ${collapsed ? "lg:justify-center" : ""}`}><LogOut size={17} /><span className={collapsed ? "lg:hidden" : ""}>{t.logout}</span></button></div>
       </aside>
       <div className={`transition-all duration-300 ${collapsed ? "lg:ml-[92px]" : "lg:ml-[272px]"}`}>
-        <header className="sticky top-0 z-20 flex items-center justify-between border-b border-white/5 bg-[#061215]/85 px-5 py-4 backdrop-blur-xl sm:px-8"><button onClick={() => setSidebar(true)} className="icon-button lg:hidden"><Menu /></button><div className="min-w-0"><h1 className="truncate text-lg font-semibold text-white">{nav.find(([key]) => key === view)?.[1]}</h1><p className="hidden truncate text-xs text-slate-500 sm:block">{t.subtitle}</p></div><div className="flex gap-2"><button className="icon-button hidden sm:grid" title="System is live"><Bell size={18} /><span className="absolute right-2 top-2 size-1.5 rounded-full bg-teal-300" /></button><button onClick={toggleLanguage} className="icon-button"><Languages size={18} /></button><button onClick={() => loadAll(true)} disabled={loading} className="primary-button"><RefreshCw size={16} className={loading ? "animate-spin" : ""} /><span className="hidden sm:inline">{t.sync}</span></button></div></header>
+        <header className="sticky top-0 z-20 flex items-center justify-between border-b border-white/5 bg-[#061215]/85 px-5 py-4 backdrop-blur-xl sm:px-8"><button onClick={() => setSidebar(true)} className="icon-button lg:hidden"><Menu /></button><div className="min-w-0"><h1 className="truncate text-lg font-semibold text-white">{nav.find(([key]) => key === view)?.[1]}</h1><p className="hidden truncate text-xs text-slate-500 sm:block">{t.subtitle}</p></div><div className="flex gap-2"><button className="icon-button hidden sm:grid" title="System is live"><Bell size={18} /><span className="absolute right-2 top-2 size-1.5 rounded-full bg-teal-300" /></button><button onClick={toggleLanguage} className="icon-button"><Languages size={18} /></button><button onClick={() => loadAll(false)} disabled={loading} className="primary-button" title="Reload the latest records from the database"><RefreshCw size={16} className={loading ? "animate-spin" : ""} /><span className="hidden sm:inline">Refresh data</span></button></div></header>
         <section className="mx-auto max-w-[1500px] p-5 sm:p-8">
           {error && <div className="mb-5 rounded-xl border border-rose-400/20 bg-rose-400/10 p-3 text-sm text-rose-200">{error}</div>}
           {loading && !attendance.length ? <p className="py-20 text-center text-slate-400">{t.loading}</p> : (
@@ -541,12 +541,12 @@ export default function App() {
                   setTimeFrom={setHistoryTimeFrom}
                   timeTo={historyTimeTo}
                   setTimeTo={setHistoryTimeTo}
-                  verification={historyVerification}
-                  setVerification={setHistoryVerification}
+                  arrival={historyArrival}
+                  setArrival={setHistoryArrival}
                   sort={historySort}
                   setSort={setHistorySort}
                 />
-                <HistoryTable rows={historyPagination.items} t={t} time={time} />
+                <HistoryTable rows={historyPagination.items} t={t} time={shortTime} status={status} locale={locale} />
                 <PaginationPro data={historyPagination} page={historyPage} setPage={setHistoryPage} limit={historyLimit} setLimit={setHistoryLimit} t={t} />
               </>}
               {view === "analytics" && <AnalyticsPro t={t} attendance={attendanceSummary} employees={employeeSummary} />}
@@ -591,7 +591,7 @@ function filterAndSortHistory(rows, filters) {
   const needle = filters.search.trim().toLocaleLowerCase();
   const selected = new Set(filters.employees);
   const filtered = rows.filter((row) => {
-    const punch = new Date(row.punchTime);
+    const punch = new Date(row.checkIn);
     if (Number.isNaN(punch.getTime())) return false;
     if (needle && !`${row.employeeName || ""} ${row.employeeId || ""}`.toLocaleLowerCase().includes(needle)) return false;
     if (selected.size && !selected.has(String(row.employeeId))) return false;
@@ -600,15 +600,15 @@ function filterAndSortHistory(rows, filters) {
     const clock = `${String(punch.getHours()).padStart(2, "0")}:${String(punch.getMinutes()).padStart(2, "0")}`;
     if (filters.timeFrom && clock < filters.timeFrom) return false;
     if (filters.timeTo && clock > filters.timeTo) return false;
-    if (filters.verification !== "all" && String(row.verifyMode ?? 0) !== filters.verification) return false;
+    if (filters.arrival !== "all" && row.arrivalStatus !== filters.arrival) return false;
     return true;
   });
   return filtered.sort((a, b) => {
-    if (filters.sort === "oldest") return new Date(a.punchTime) - new Date(b.punchTime);
-    if (filters.sort === "name-asc") return (a.employeeName || "").localeCompare(b.employeeName || "", undefined, { sensitivity: "base" }) || new Date(b.punchTime) - new Date(a.punchTime);
-    if (filters.sort === "name-desc") return (b.employeeName || "").localeCompare(a.employeeName || "", undefined, { sensitivity: "base" }) || new Date(b.punchTime) - new Date(a.punchTime);
-    if (filters.sort === "id-asc") return String(a.employeeId || "").localeCompare(String(b.employeeId || ""), undefined, { numeric: true }) || new Date(b.punchTime) - new Date(a.punchTime);
-    return new Date(b.punchTime) - new Date(a.punchTime);
+    if (filters.sort === "oldest") return new Date(a.checkIn) - new Date(b.checkIn);
+    if (filters.sort === "name-asc") return (a.employeeName || "").localeCompare(b.employeeName || "", undefined, { sensitivity: "base" }) || new Date(b.checkIn) - new Date(a.checkIn);
+    if (filters.sort === "name-desc") return (b.employeeName || "").localeCompare(a.employeeName || "", undefined, { sensitivity: "base" }) || new Date(b.checkIn) - new Date(a.checkIn);
+    if (filters.sort === "id-asc") return String(a.employeeId || "").localeCompare(String(b.employeeId || ""), undefined, { numeric: true }) || new Date(b.checkIn) - new Date(a.checkIn);
+    return new Date(b.checkIn) - new Date(a.checkIn);
   });
 }
 function sortAttendanceRows(rows, sortBy) {
@@ -725,7 +725,7 @@ function EmployeeTable({ rows, t, time, status }) {
 function HistoryFilters({
   rows, filteredCount, employeeOptions, search, setSearch, date, setDate, selectedEmployees,
   setSelectedEmployees, period, setPeriod, from, setFrom, to, setTo,
-  timeFrom, setTimeFrom, timeTo, setTimeTo, verification, setVerification,
+  timeFrom, setTimeFrom, timeTo, setTimeTo, arrival, setArrival,
   sort, setSort,
 }) {
   const [employeeSearch, setEmployeeSearch] = useState("");
@@ -734,7 +734,7 @@ function HistoryFilters({
   );
   const reset = () => {
     setSearch(""); setDate(""); setSelectedEmployees([]); setPeriod("30"); setFrom(""); setTo("");
-    setTimeFrom(""); setTimeTo(""); setVerification("all"); setSort("newest");
+    setTimeFrom(""); setTimeTo(""); setArrival("all"); setSort("newest");
   };
   const toggleEmployee = (id) =>
     setSelectedEmployees((current) =>
@@ -745,7 +745,7 @@ function HistoryFilters({
       <div>
         <span className="eyebrow"><SlidersHorizontal size={13} /> Advanced history search</span>
         <h2>Find employee punch records</h2>
-        <p>Combine employee, date, time and verification filters for an accurate audit view.</p>
+        <p>Combine employee, date, time and arrival-category filters for an accurate audit view.</p>
       </div>
       <div className="history-results"><b>{filteredCount}</b><span>of {rows.length} punches</span></div>
     </div>
@@ -772,7 +772,7 @@ function HistoryFilters({
         </details>
       </div>
       <label className="history-control"><span>Date period</span><select value={period} onChange={(event) => setPeriod(event.target.value)}><option value="1">Today</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="90">Last 90 days</option><option value="365">Last 12 months</option><option value="all">All loaded records</option><option value="custom">Custom date range</option></select></label>
-      <label className="history-control"><span>Verification method</span><select value={verification} onChange={(event) => setVerification(event.target.value)}><option value="all">All methods</option><option value="1">Fingerprint</option><option value="3">Face / card</option><option value="4">Password / PIN</option><option value="0">Other / device default</option></select></label>
+      <label className="history-control"><span>Arrival category</span><select value={arrival} onChange={(event) => setArrival(event.target.value)}><option value="all">All arrival categories</option><option value="Early comer">Early comer</option><option value="Moderate comer">Moderate comer</option><option value="Late comer">Late comer</option></select></label>
       {period === "custom" && <><label className="history-control"><span>From date</span><input type="date" value={from} max={to || dateInputValue(new Date())} onChange={(event) => setFrom(event.target.value)} /></label><label className="history-control"><span>To date</span><input type="date" value={to} min={from} max={dateInputValue(new Date())} onChange={(event) => setTo(event.target.value)} /></label></>}
       <label className="history-control"><span>Time from</span><input type="time" value={timeFrom} onChange={(event) => setTimeFrom(event.target.value)} /></label>
       <label className="history-control"><span>Time to</span><input type="time" value={timeTo} onChange={(event) => setTimeTo(event.target.value)} /></label>
@@ -790,10 +790,25 @@ function Pagination({ data, page, setPage, limit, setLimit, t }) {
     <div className="flex items-center gap-2"><button onClick={() => setPage(Math.max(1, page - 1))} disabled={page <= 1} className="rounded-lg border border-slate-200 px-3 py-2 disabled:opacity-40">{t.previous}</button><span className="min-w-24 text-center">{t.page} {data.page || 1} {t.of} {data.totalPages || 1}</span><button onClick={() => setPage(Math.min(data.totalPages || 1, page + 1))} disabled={page >= (data.totalPages || 1)} className="rounded-lg border border-slate-200 px-3 py-2 disabled:opacity-40">{t.next}</button></div>
   </div>;
 }
-function verificationLabel(value) {
-  return { 1: "Fingerprint", 3: "Face / card", 4: "Password / PIN", 0: "Device default" }[Number(value)] || `Method ${value}`;
+function HistoryTable({ rows, t, time, status, locale }) {
+  const date = (value) => new Date(`${value}T12:00:00`).toLocaleDateString(locale, { dateStyle: "medium" });
+  return <Table headers={["Attendance date", t.employee, t.id, t.checkIn, t.arrival, t.lunchOut, t.lunchReturn, t.lunchDuration, t.lunchStatus, t.checkOut, t.departure, t.hours]}>
+    {rows.length ? rows.map((r) => <tr key={`${r.attendanceDate}-${r.employeeId}`} className="hover:bg-emerald-50/40">
+      <td className="whitespace-nowrap px-5 py-4 font-medium text-slate-300">{date(r.attendanceDate)}</td>
+      <td className="px-5 py-4 font-medium text-slate-900">{r.employeeName}</td>
+      <td className="px-5 py-4 text-slate-500">{r.employeeId}</td>
+      <td className="px-5 py-4">{time(r.checkIn)}</td>
+      <td className="px-5 py-4"><span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ring-1 ${categoryColor(r.arrivalStatus)}`}>{status(r.arrivalStatus)}</span></td>
+      <td className="px-5 py-4">{time(r.lunchOut)}</td>
+      <td className="px-5 py-4">{time(r.lunchIn)}</td>
+      <td className="px-5 py-4">{r.lunchMinutes ?? "—"}</td>
+      <td className="px-5 py-4"><span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ring-1 ${lunchColor(r.lunchStatus)}`}>{status(r.lunchStatus)}</span></td>
+      <td className="px-5 py-4">{time(r.checkOut)}</td>
+      <td className="px-5 py-4"><span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ring-1 ${categoryColor(r.departureStatus)}`}>{status(r.departureStatus)}</span></td>
+      <td className="px-5 py-4">{r.workedHours?.toFixed(2) ?? "—"}</td>
+    </tr>) : <tr><td colSpan="12" className="px-5 py-16 text-center text-slate-500">{t.noData}</td></tr>}
+  </Table>;
 }
-function HistoryTable({ rows, t, time }) { return <Table headers={[t.employee, t.id, "Punch date and time", "Verification method"]}>{rows.length ? rows.map((r) => <tr key={r.logId} className="hover:bg-emerald-50/40"><td className="px-5 py-4 font-medium text-slate-900">{r.employeeName}</td><td className="px-5 py-4 text-slate-400">{r.employeeId}</td><td className="px-5 py-4">{time(r.punchTime)}</td><td className="px-5 py-4"><span className="verification-badge">{verificationLabel(r.verifyMode)}</span></td></tr>) : <tr><td colSpan="4" className="px-5 py-16 text-center text-slate-500">{t.noData}</td></tr>}</Table>; }
 function Analytics({ t, attendance, employees }) { const items = [[t.totalEmployees, employees.total], [t.punchedToday, employees.punchedToday], [t.notToday, employees.notToday], [t.inactiveWeek, employees.inactiveWeek], [t.inactiveMonth, employees.inactiveMonth], [t.early, attendance.earlyComers], [t.moderate, attendance.moderateComers], [t.late, attendance.lateComers]]; const max = Math.max(...items.map(([, v]) => v || 0), 1); return <Panel title={t.analytics}><div className="space-y-5">{items.map(([label, value]) => <div key={label}><div className="mb-2 flex justify-between text-sm text-slate-700"><span>{label}</span><b>{value || 0}</b></div><div className="h-2 rounded-full bg-slate-100"><div className="h-full rounded-full bg-emerald-500" style={{ width: `${((value || 0) / max) * 100}%` }} /></div></div>)}</div></Panel>; }
 
 function PaginationPro({ data, page, setPage, limit, setLimit, t }) {

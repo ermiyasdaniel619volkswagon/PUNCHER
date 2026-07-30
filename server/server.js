@@ -636,6 +636,27 @@ function buildAttendanceRows(punches) {
     .sort((a, b) => a.checkIn - b.checkIn);
 }
 
+function buildHistoricalAttendanceRows(punches) {
+  const punchesByDate = new Map();
+  for (const punch of punches) {
+    const attendanceDate = localDateKey(new Date(punch.punchTime));
+    if (!punchesByDate.has(attendanceDate)) punchesByDate.set(attendanceDate, []);
+    punchesByDate.get(attendanceDate).push(punch);
+  }
+
+  return [...punchesByDate.entries()]
+    .flatMap(([attendanceDate, dailyPunches]) =>
+      buildAttendanceRows(dailyPunches).map((row) => ({
+        ...row,
+        attendanceDate,
+      }))
+    )
+    .sort((left, right) =>
+      right.attendanceDate.localeCompare(left.attendanceDate) ||
+      new Date(right.checkIn) - new Date(left.checkIn)
+    );
+}
+
 async function getTodayAttendance() {
   const { dayStart, dayEnd } = getTodayRange();
   const punches = await Punch.find({
@@ -866,7 +887,14 @@ app.get("/api/history", async (req, res) => {
       .sort({ punchTime: -1 })
       .limit(5000)
       .lean();
-    res.json({ punches, days, total: punches.length });
+    const attendance = buildHistoricalAttendanceRows(punches);
+    res.json({
+      punches,
+      attendance,
+      days,
+      total: attendance.length,
+      rawPunches: punches.length,
+    });
   } catch (error) {
     res.status(500).json({ message: "Unable to load attendance history." });
   }
