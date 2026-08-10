@@ -23,6 +23,8 @@ import {
   ShieldCheck,
   Sparkles,
   TrendingUp,
+  UserCheck,
+  UserMinus,
   Users,
   X,
 } from "lucide-react";
@@ -296,6 +298,10 @@ export default function App() {
   });
   const [employeePage, setEmployeePage] = useState(1);
   const [employeeLimit, setEmployeeLimit] = useState(20);
+  const [employeeView, setEmployeeView] = useState("active");
+  const [employeeStatusAction, setEmployeeStatusAction] = useState(null);
+  const [employeeStatusReason, setEmployeeStatusReason] = useState("");
+  const [employeeStatusLoading, setEmployeeStatusLoading] = useState(false);
   const [historyRows, setHistoryRows] = useState([]);
   const [attendancePage, setAttendancePage] = useState(1);
   const [attendanceLimit, setAttendanceLimit] = useState(10);
@@ -373,6 +379,7 @@ export default function App() {
         limit: String(employeeLimit),
         category,
         search: query,
+        employment: employeeView,
       });
       const data = await api(`/api/employees?${params}`);
       setEmployees(data.employees || []);
@@ -381,7 +388,7 @@ export default function App() {
     } catch (employeeError) {
       setError(employeeError.message);
     }
-  }, [api, token, employeePage, employeeLimit, category, query]);
+  }, [api, token, employeePage, employeeLimit, category, query, employeeView]);
 
   useEffect(() => {
     const timer = setTimeout(loadEmployees, query ? 250 : 0);
@@ -390,7 +397,33 @@ export default function App() {
 
   useEffect(() => {
     setEmployeePage(1);
-  }, [query, category, employeeLimit]);
+  }, [query, category, employeeLimit, employeeView]);
+
+  const changeEmployeeStatus = async () => {
+    if (!employeeStatusAction) return;
+    const nextStatus = employeeStatusAction.employmentStatus === "inactive" ? "active" : "inactive";
+    if (nextStatus === "inactive" && !employeeStatusReason.trim()) {
+      setError("Please provide a reason before deactivating this employee.");
+      return;
+    }
+    setEmployeeStatusLoading(true);
+    setError("");
+    try {
+      await api(`/api/employees/${encodeURIComponent(employeeStatusAction.employeeId)}/status`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: nextStatus, reason: employeeStatusReason.trim() }),
+      });
+      setEmployeeStatusAction(null);
+      setEmployeeStatusReason("");
+      await loadAll(false);
+      await loadEmployees();
+    } catch (statusError) {
+      setError(statusError.message);
+    } finally {
+      setEmployeeStatusLoading(false);
+    }
+  };
 
   const filteredAttendance = useMemo(
     () =>
@@ -509,8 +542,8 @@ export default function App() {
                   <StatCard label={t.notToday} value={employeeSummary.notToday} icon={CalendarDays} />
                   <StatCard label={t.inactiveWeek} value={employeeSummary.inactiveWeek} icon={History} />
                 </div>
-                <Filters query={query} setQuery={setQuery} category={category} setCategory={setCategory} t={t} />
-                <EmployeeTable rows={employees} t={t} time={time} status={status} />
+                <Filters query={query} setQuery={setQuery} category={category} setCategory={setCategory} employeeView={employeeView} setEmployeeView={setEmployeeView} t={t} />
+                <EmployeeTable rows={employees} t={t} time={time} status={status} onStatusChange={setEmployeeStatusAction} />
                 <PaginationPro
                   data={employeePagination}
                   page={employeePage}
@@ -555,6 +588,7 @@ export default function App() {
           )}
         </section>
       </div>
+      {employeeStatusAction && <EmployeeStatusDialog employee={employeeStatusAction} reason={employeeStatusReason} setReason={setEmployeeStatusReason} loading={employeeStatusLoading} onConfirm={changeEmployeeStatus} onClose={() => { if (!employeeStatusLoading) { setEmployeeStatusAction(null); setEmployeeStatusReason(""); } }} />}
     </main>
   );
 }
@@ -660,7 +694,7 @@ function Overview({ t, attendance, employees, setView }) {
     <div className="grid gap-5 lg:grid-cols-2"><Panel title={t.attendance}><Metric label={t.rawPunches} value={attendance.rawPunches} /><Metric label={t.early} value={attendance.earlyComers} /><Metric label={t.moderate} value={attendance.moderateComers} color="text-amber-300" /><Metric label={t.late} value={attendance.lateComers} color="text-rose-300" /></Panel><Panel title={t.employees}><Metric label={t.inactiveMonth} value={employees.inactiveMonth} color="text-rose-300" /><Metric label={t.neverPunched} value={employees.neverPunched} color="text-amber-300" /><Metric label="Checked out" value={attendance.checkedOut} /><Metric label={t.notToday} value={employees.notToday} /></Panel></div>
   </div>;
 }
-function Filters({ query, setQuery, category, setCategory, t }) { return <div className="filter-bar mb-5"><label className="search-field"><Search size={16} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t.search} /></label><label className="select-wrap"><SlidersHorizontal size={16} /><select value={category} onChange={(e) => setCategory(e.target.value)}><option value="all">{t.totalEmployees}</option><option value="Punched today">{t.punchedToday}</option><option value="Not punched today">{t.notToday}</option><option value="Inactive 7+ days">{t.inactiveWeek}</option><option value="Inactive 30+ days">{t.inactiveMonth}</option><option value="Never punched">{t.neverPunched}</option></select></label></div>; }
+function Filters({ query, setQuery, category, setCategory, employeeView, setEmployeeView, t }) { return <div className="filter-bar mb-5"><label className="search-field"><Search size={16} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t.search} /></label><label className="select-wrap"><Users size={16} /><select value={employeeView} onChange={(e) => { setEmployeeView(e.target.value); setCategory("all"); }}><option value="active">Active employees</option><option value="inactive">Inactive / former employees</option></select></label><label className="select-wrap"><SlidersHorizontal size={16} /><select value={category} onChange={(e) => setCategory(e.target.value)} disabled={employeeView === "inactive"}><option value="all">All activity categories</option><option value="Punched today">{t.punchedToday}</option><option value="Not punched today">{t.notToday}</option><option value="Inactive 7+ days">{t.inactiveWeek}</option><option value="Inactive 30+ days">{t.inactiveMonth}</option><option value="Never punched">{t.neverPunched}</option></select></label></div>; }
 function AttendanceFilters({ arrivalFilter, setArrivalFilter, departureFilter, setDepartureFilter, lunchFilter, setLunchFilter, attendanceSort, setAttendanceSort, t, status }) {
   return <div className="filter-bar mb-5">
     <select value={arrivalFilter} onChange={(e) => setArrivalFilter(e.target.value)}>
@@ -711,16 +745,30 @@ function lunchColor(value) {
   return "bg-rose-100 text-rose-700 ring-rose-600/15";
 }
 function AttendanceTable({ rows, t, time, status }) { return <Table headers={[t.employee, t.id, t.checkIn, t.arrival, t.lunchOut, t.lunchReturn, t.lunchDuration, t.lunchStatus, t.checkOut, t.departure, t.hours, t.punchAudit]}>{rows.length ? rows.map((r) => { const ignored = (r.eventAudit || []).filter((event) => !event.accepted); return <tr key={r.employeeId} className="hover:bg-emerald-50/40"><td className="px-5 py-4 font-medium text-slate-900">{r.employeeName}</td><td className="px-5 py-4 text-slate-500">{r.employeeId}</td><td className="px-5 py-4">{time(r.checkIn)}</td><td className="px-5 py-4"><span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ring-1 ${categoryColor(r.arrivalStatus)}`}>{status(r.arrivalStatus)}</span></td><td className="px-5 py-4">{time(r.lunchOut)}</td><td className="px-5 py-4">{time(r.lunchIn)}</td><td className="px-5 py-4">{r.lunchMinutes ?? "—"}</td><td className="px-5 py-4"><span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ring-1 ${lunchColor(r.lunchStatus)}`}>{status(r.lunchStatus)}</span></td><td className="px-5 py-4">{time(r.checkOut)}</td><td className="px-5 py-4"><span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ring-1 ${categoryColor(r.departureStatus)}`}>{status(r.departureStatus)}</span></td><td className="px-5 py-4">{r.workedHours?.toFixed(2) ?? "—"}</td><td className="px-5 py-4"><span title={ignored.map((event) => `${time(event.time)}: ${event.reason}`).join("\n")} className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${ignored.length ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-700"}`}>{ignored.length} {t.ignoredPunches}</span></td></tr>; }) : <tr><td colSpan="12" className="px-5 py-16 text-center text-slate-500">{t.noData}</td></tr>}</Table>; }
-function EmployeeTable({ rows, t, time, status }) {
-  return <Table headers={[t.employee, t.id, t.punchStatus, t.activity, t.lastPunch]}>
+function EmployeeTable({ rows, t, time, status, onStatusChange }) {
+  return <Table headers={[t.employee, t.id, "Employment", t.activity, t.lastPunch, "Reason", "Action"]}>
     {rows.length ? rows.map((r) => <tr key={r.employeeId} className="hover:bg-emerald-50/40">
       <td className="px-5 py-4 font-medium text-slate-900">{r.employeeName}</td>
       <td className="px-5 py-4 text-slate-500">{r.employeeId}</td>
-      <td className="px-5 py-4"><span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${r.punchedToday ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"}`}>{r.punchedToday ? t.punched : t.notPunched}</span></td>
-      <td className="px-5 py-4 font-medium text-slate-700">{status(r.activityCategory)}</td>
+      <td className="px-5 py-4"><span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${r.employmentStatus === "inactive" ? "bg-slate-100 text-slate-700" : "bg-emerald-100 text-emerald-700"}`}>{r.employmentStatus === "inactive" ? "Inactive" : "Active"}</span></td>
+      <td className="px-5 py-4 font-medium text-slate-700">{r.employmentStatus === "inactive" ? "Former employee" : status(r.activityCategory)}</td>
       <td className="px-5 py-4 text-slate-600">{time(r.lastPunch)}</td>
-    </tr>) : <tr><td colSpan="5" className="px-5 py-16 text-center text-slate-500">{t.noData}</td></tr>}
+      <td className="max-w-64 px-5 py-4 text-slate-500">{r.inactiveReason || "—"}</td>
+      <td className="px-5 py-4"><button type="button" onClick={() => onStatusChange(r)} className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-semibold ${r.employmentStatus === "inactive" ? "border-emerald-400/20 bg-emerald-400/10 text-emerald-300" : "border-rose-400/20 bg-rose-400/10 text-rose-300"}`}>{r.employmentStatus === "inactive" ? <UserCheck size={15} /> : <UserMinus size={15} />}{r.employmentStatus === "inactive" ? "Restore" : "Deactivate"}</button></td>
+    </tr>) : <tr><td colSpan="7" className="px-5 py-16 text-center text-slate-500">{t.noData}</td></tr>}
   </Table>;
+}
+
+function EmployeeStatusDialog({ employee, reason, setReason, loading, onConfirm, onClose }) {
+  const restoring = employee.employmentStatus === "inactive";
+  return <div className="fixed inset-0 z-[80] grid place-items-center bg-black/70 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="employee-status-title">
+    <div className="w-full max-w-lg rounded-2xl border border-white/10 bg-[#0a1d20] p-6 shadow-2xl shadow-black/50">
+      <div className="flex items-start gap-4"><span className={`grid size-11 shrink-0 place-items-center rounded-xl ${restoring ? "bg-emerald-400/10 text-emerald-300" : "bg-rose-400/10 text-rose-300"}`}>{restoring ? <UserCheck /> : <UserMinus />}</span><div><h2 id="employee-status-title" className="text-lg font-semibold text-white">{restoring ? "Restore employee" : "Deactivate employee"}</h2><p className="mt-1 text-sm text-slate-400">{employee.employeeName} · ID {employee.employeeId}</p></div></div>
+      <div className="mt-5 rounded-xl border border-white/5 bg-white/[.025] p-4 text-sm leading-6 text-slate-400">{restoring ? "This employee will return to active workforce counts and attendance monitoring." : "This employee will be removed from active workforce reporting. Their complete punch and payroll history will remain preserved."}</div>
+      {!restoring && <label className="mt-5 block"><span className="mb-2 block text-sm font-medium text-slate-300">Reason for deactivation <span className="text-rose-300">*</span></span><textarea autoFocus value={reason} maxLength={500} onChange={(event) => setReason(event.target.value)} placeholder="Example: Employment ended" className="min-h-24 w-full resize-y rounded-xl border border-white/10 bg-[#071719] px-3 py-3 text-sm text-white outline-none focus:border-teal-400" /></label>}
+      <div className="mt-6 flex justify-end gap-3"><button type="button" disabled={loading} onClick={onClose} className="rounded-xl border border-white/10 px-4 py-2.5 text-sm font-semibold text-slate-300 disabled:opacity-50">Cancel</button><button type="button" disabled={loading || (!restoring && !reason.trim())} onClick={onConfirm} className={`rounded-xl px-4 py-2.5 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-40 ${restoring ? "bg-emerald-500 text-emerald-950" : "bg-rose-500 text-white"}`}>{loading ? "Saving…" : restoring ? "Restore employee" : "Confirm deactivation"}</button></div>
+    </div>
+  </div>;
 }
 function HistoryFilters({
   rows, filteredCount, employeeOptions, search, setSearch, date, setDate, selectedEmployees,

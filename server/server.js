@@ -93,6 +93,28 @@ const employeeSchema = new mongoose.Schema(
     validTo: Date,
     deviceData: mongoose.Schema.Types.Mixed,
     lastSyncedAt: Date,
+    employmentStatus: {
+      type: String,
+      enum: ["active", "inactive"],
+      default: "active",
+      index: true,
+    },
+    inactiveAt: Date,
+    inactiveReason: { type: String, default: "" },
+    statusChangedBy: {
+      email: String,
+      name: String,
+    },
+    statusHistory: [
+      {
+        _id: false,
+        status: { type: String, enum: ["active", "inactive"] },
+        reason: String,
+        changedAt: Date,
+        changedByEmail: String,
+        changedByName: String,
+      },
+    ],
   },
   { timestamps: true }
 );
@@ -659,7 +681,11 @@ function buildHistoricalAttendanceRows(punches) {
 
 async function getTodayAttendance() {
   const { dayStart, dayEnd } = getTodayRange();
+  const inactiveEmployeeIds = await Employee.find({
+    employmentStatus: "inactive",
+  }).distinct("employeeId");
   const punches = await Punch.find({
+    employeeId: { $nin: inactiveEmployeeIds },
     punchTime: { $gte: dayStart, $lt: dayEnd },
   })
     .sort({ punchTime: 1 })
@@ -1012,7 +1038,7 @@ app.get("/api/employees", async (req, res) => {
     const monthAgo = new Date(dayStart);
     monthAgo.setDate(monthAgo.getDate() - 30);
 
-    const activeRows = employees.map((employee) => {
+    const enrichedRows = employees.map((employee) => {
       const punch = lastPunchMap.get(employee.employeeId);
       const lastPunch = punch?.lastPunch ?? null;
       let activityCategory = "Punched today";
@@ -1023,6 +1049,7 @@ app.get("/api/employees", async (req, res) => {
 
       return {
         ...employee,
+        employmentStatus: employee.employmentStatus || "active",
         activeOnDevice: true,
         lastPunch,
         lastVerificationMode: punch?.lastVerificationMode ?? null,
@@ -1030,7 +1057,24 @@ app.get("/api/employees", async (req, res) => {
         activityCategory,
       };
     });
-    const rows = [...activeRows].sort((a, b) =>
+    const activeRows = enrichedRows.filter(
+      (employee) => employee.employmentStatus !== "inactive"
+    );
+    const inactiveRows = enrichedRows.filter(
+      (employee) => employee.employmentStatus === "inactive"
+    );
+    const employment = ["active", "inactive", "all"].includes(
+      String(req.query.employment)
+    )
+      ? String(req.query.employment)
+      : "active";
+    const selectedRows =
+      employment === "inactive"
+        ? inactiveRows
+        : employment === "all"
+          ? enrichedRows
+          : activeRows;
+    const rows = [...selectedRows].sort((a, b) =>
       a.employeeName.localeCompare(b.employeeName)
     );
 
@@ -1058,8 +1102,10 @@ app.get("/api/employees", async (req, res) => {
     res.json({
       employees: paginated,
       summary: {
-        total: rows.length,
+        total: activeRows.length,
         activeDirectory: activeRows.length,
+        activeEmployees: activeRows.length,
+        inactiveEmployees: inactiveRows.length,
         punchedToday: activeRows.filter((row) => row.punchedToday).length,
         notToday: activeRows.filter((row) => !row.punchedToday).length,
         inactiveWeek: activeRows.filter(
@@ -1070,6 +1116,7 @@ app.get("/api/employees", async (req, res) => {
         inactiveMonth: activeRows.filter((row) => row.activityCategory === "Inactive 30+ days").length,
         neverPunched: activeRows.filter((row) => row.activityCategory === "Never punched").length,
       },
+      employment,
       pagination: {
         page: currentPage,
         limit,
@@ -1080,6 +1127,69 @@ app.get("/api/employees", async (req, res) => {
   } catch (error) {
     console.error("Employee directory query failed:", error);
     res.status(500).json({ message: "Unable to load employees." });
+  }
+});
+
+app.patch("/api/employees/:employeeId/status", async (req, res) => {
+  try {
+    const employeeId = String(req.params.employeeId || "").trim();
+    const employmentStatus = String(req.body.status || "").toLowerCase();
+    const reason = String(req.body.reason || "").trim().slice(0, 500);
+
+    if (!employeeId || !["active", "inactive"].includes(employmentStatus)) {
+      return res.status(400).json({
+        message: "A valid employee and employment status are required.",
+      });
+    }
+    if (employmentStatus === "inactive" && !reason) {
+      return res.status(400).json({
+        message: "Please provide a reason for deactivating this employee.",
+      });
+    }
+
+    const changedAt = new Date();
+    const employee = await Employee.findOneAndUpdate(
+      { employeeId },
+      {
+        $set: {
+          employmentStatus,
+          inactiveAt: employmentStatus === "inactive" ? changedAt : null,
+          inactiveReason: employmentStatus === "inactive" ? reason : "",
+          statusChangedBy: {
+            email: req.user.email,
+            name: req.user.name,
+          },
+        },
+        $push: {
+          statusHistory: {
+            status: employmentStatus,
+            reason,
+            changedAt,
+            changedByEmail: req.user.email,
+            changedByName: req.user.name,
+          },
+        },
+      },
+      { new: true, runValidators: true }
+    ).lean();
+
+    if (!employee) {
+      return res.status(404).json({ message: "Employee was not found." });
+    }
+
+    console.info(
+      `[employees] ${req.user.email} changed employee ${employeeId} to ${employmentStatus}.`
+    );
+    res.json({
+      message:
+        employmentStatus === "inactive"
+          ? "Employee deactivated successfully. Attendance history was preserved."
+          : "Employee restored successfully.",
+      employee,
+    });
+  } catch (error) {
+    console.error("Employee status update failed:", error);
+    res.status(500).json({ message: "Unable to update employee status." });
   }
 });
 
